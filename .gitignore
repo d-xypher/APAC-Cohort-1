@@ -1,10 +1,29 @@
-# Python virtual environments
-.venv/
-venv/
-env/
-ENV/
+# Python
 backend/venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+backend/credentials.json
+backend/token.json
+token.json
+credentials.json
 
-# Node modules
+# Node
 node_modules/
-frontend/node_modules
+dist/
+dist-ssr/
+*.local
+
+# Tech-specific
+.vscode/
+cascade.db
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
