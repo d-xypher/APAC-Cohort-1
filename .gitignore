@@ -1,29 +1,10 @@
-# Python
-backend/venv/
-__pycache__/
-*.py[cod]
-*$py.class
-.env
-.venv
-env/
+# Python virtual environments
+.venv/
 venv/
+env/
 ENV/
-backend/credentials.json
-backend/token.json
-token.json
-credentials.json
+backend/venv/
 
-# Node
+# Node modules
 node_modules/
-dist/
-dist-ssr/
-*.local
-
-# Tech-specific
-.vscode/
-cascade.db
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
+frontend/node_modules

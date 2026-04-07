@@ -4,8 +4,15 @@ from typing import List
 from backend.db.database import get_db
 from backend.models.dag import DAGNode, DAGEdge, NodeType, NodeStatus
 from backend.models.schemas import DAGNodeCreate, DAGNodeUpdate, DAGNodeResponse, DAGEdgeCreate, DAGEdgeResponse
+from backend.utils.datetime_utils import ensure_utc
 
 router = APIRouter(prefix="/api/dag", tags=["dag"])
+
+
+def _normalize_datetime_payload(payload: dict):
+    for key in ["start_time", "end_time", "deadline"]:
+        payload[key] = ensure_utc(payload.get(key))
+    return payload
 
 @router.get("/nodes", response_model=List[DAGNodeResponse])
 def get_nodes(db: Session = Depends(get_db)):
@@ -13,7 +20,8 @@ def get_nodes(db: Session = Depends(get_db)):
 
 @router.post("/nodes", response_model=DAGNodeResponse)
 def create_node(node: DAGNodeCreate, db: Session = Depends(get_db)):
-    db_node = DAGNode(**node.model_dump())
+    payload = _normalize_datetime_payload(node.model_dump())
+    db_node = DAGNode(**payload)
     db.add(db_node)
     db.commit()
     db.refresh(db_node)
@@ -25,7 +33,8 @@ def update_node(node_id: int, node_update: DAGNodeUpdate, db: Session = Depends(
     if not db_node:
         raise HTTPException(status_code=404, detail="Node not found")
         
-    for key, value in node_update.model_dump(exclude_unset=True).items():
+    update_payload = _normalize_datetime_payload(node_update.model_dump(exclude_unset=True))
+    for key, value in update_payload.items():
         setattr(db_node, key, value)
         
     db.commit()

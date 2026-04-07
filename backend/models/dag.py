@@ -1,12 +1,12 @@
 """CASCADE — DAG Data Models (SQLAlchemy)."""
 import json
-from datetime import datetime, timedelta
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Float,
-    ForeignKey, Boolean, Enum as SAEnum
+    ForeignKey, Boolean
 )
 from sqlalchemy.orm import relationship
 from backend.db.database import Base
+from backend.utils.datetime_utils import ensure_utc, utc_now
 import enum
 
 
@@ -38,10 +38,10 @@ class DAGNode(Base):
     status = Column(String(50), nullable=False, default=NodeStatus.SCHEDULED.value)
 
     # Scheduling
-    start_time = Column(DateTime, nullable=True)
-    end_time = Column(DateTime, nullable=True)
+    start_time = Column(DateTime(timezone=True), nullable=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
     duration_minutes = Column(Integer, nullable=True)
-    deadline = Column(DateTime, nullable=True)
+    deadline = Column(DateTime(timezone=True), nullable=True)
 
     # Priority (1=highest, 5=lowest)
     priority = Column(Integer, nullable=True, default=3)
@@ -51,14 +51,20 @@ class DAGNode(Base):
     source = Column(String(100), nullable=True)  # "google_calendar", "todoist", "notion"
     cascade_note = Column(Text, nullable=True)    # Auto-generated note explaining adjustments
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     # Relationships
     outgoing_edges = relationship("DAGEdge", foreign_keys="DAGEdge.from_node_id", back_populates="from_node", cascade="all, delete-orphan")
     incoming_edges = relationship("DAGEdge", foreign_keys="DAGEdge.to_node_id", back_populates="to_node", cascade="all, delete-orphan")
 
     def to_dict(self):
+        start_time = ensure_utc(self.start_time)
+        end_time = ensure_utc(self.end_time)
+        deadline = ensure_utc(self.deadline)
+        created_at = ensure_utc(self.created_at)
+        updated_at = ensure_utc(self.updated_at)
+
         return {
             "id": self.id,
             "external_id": self.external_id,
@@ -66,16 +72,16 @@ class DAGNode(Base):
             "description": self.description,
             "node_type": self.node_type,
             "status": self.status,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
             "duration_minutes": self.duration_minutes,
-            "deadline": self.deadline.isoformat() if self.deadline else None,
+            "deadline": deadline.isoformat() if deadline else None,
             "priority": self.priority,
             "owner": self.owner,
             "source": self.source,
             "cascade_note": self.cascade_note,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": created_at.isoformat() if created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
         }
 
 
@@ -112,15 +118,16 @@ class CascadeSnapshot(Base):
     nodes_json = Column(Text, nullable=False)  # JSON serialized list of all nodes
     edges_json = Column(Text, nullable=False)  # JSON serialized list of all edges
     changes_json = Column(Text, nullable=True)  # What changed in this cascade
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
     is_active = Column(Boolean, default=True)  # False if this cascade was undone
 
     def to_dict(self):
+        created_at = ensure_utc(self.created_at)
         return {
             "id": self.id,
             "trigger_description": self.trigger_description,
             "trigger_node_id": self.trigger_node_id,
             "changes": json.loads(self.changes_json) if self.changes_json else [],
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": created_at.isoformat() if created_at else None,
             "is_active": self.is_active,
         }

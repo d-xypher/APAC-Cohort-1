@@ -1,5 +1,5 @@
 from mcp.server.fastmcp import FastMCP
-import datetime
+from backend.utils.datetime_utils import utc_now
 
 mcp_notes = FastMCP("Notion MCP Server (Mocked)")
 
@@ -9,7 +9,7 @@ MOCK_NOTES = []
 @mcp_notes.tool()
 def append_cascade_note(target_name: str, context: str) -> str:
     """Mock appending a note to a Notion log."""
-    note = f"[{datetime.datetime.now().isoformat()}] Adjusted '{target_name}': {context}"
+    note = f"[{utc_now().isoformat()}] Adjusted '{target_name}': {context}"
     MOCK_NOTES.append(note)
     return f"Successfully logged note to Notion: {note}"
 

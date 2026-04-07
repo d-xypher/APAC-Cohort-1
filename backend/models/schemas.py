@@ -1,5 +1,5 @@
 """CASCADE — Pydantic schemas for API layer."""
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from .dag import NodeType, NodeStatus
@@ -62,11 +62,24 @@ class DAGEdgeResponse(BaseModel):
     weight: float
 
 class TriggerCascadeRequest(BaseModel):
-    trigger_node_id: int
-    new_start_time: Optional[datetime] = None
-    new_end_time: Optional[datetime] = None
-    new_status: Optional[NodeStatus] = None
-    description: str
+    trigger_node_id: int = Field(..., ge=1)
+    new_start_time: str
+    description: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("new_start_time")
+    @classmethod
+    def validate_iso_datetime(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("new_start_time is required.")
+
+        candidate = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            datetime.fromisoformat(candidate)
+        except ValueError as exc:
+            raise ValueError("new_start_time must be a valid ISO datetime string.") from exc
+
+        return text
 
 class CascadeResponse(BaseModel):
     snapshot_id: int

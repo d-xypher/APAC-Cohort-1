@@ -18,8 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./
-# We can dynamically generate requirements.txt prior to deploy, or include dependencies here:
-RUN pip install --no-cache-dir fastapi uvicorn sqlalchemy pydantic python-dotenv google-generativeai networkx google-auth google-auth-oauthlib google-api-python-client aiosqlite sse-starlette langgraph mcp
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY --from=frontend /app/frontend/dist ./static/

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import timedelta
 from backend.db.database import get_db
 from backend.models.dag import DAGNode, DAGEdge, NodeType, NodeStatus
+from backend.utils.datetime_utils import utc_now
 
 router = APIRouter(prefix="/api/seed", tags=["seed"])
 
@@ -15,7 +16,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
     db.query(DAGNode).delete()
     db.commit()
     
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
     
     # 2. Create nodes
     standup = DAGNode(
