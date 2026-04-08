@@ -1,8 +1,11 @@
 """CASCADE — Configuration Module"""
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from the backend directory regardless of where the app is run from
+backend_dir = Path(__file__).resolve().parent
+load_dotenv(backend_dir / ".env")
 
 # ── Gemini API ──────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -26,3 +29,10 @@ CORS_ORIGINS = [
 	for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 	if origin.strip()
 ]
+ALLOWED_HOSTS = [
+	host.strip()
+	for host in os.getenv("ALLOWED_HOSTS", "*").split(",")
+	if host.strip()
+]
+REDIS_URL = os.getenv("REDIS_URL", "")
+ENABLE_SEED_ENDPOINTS = os.getenv("ENABLE_SEED_ENDPOINTS", "true").lower() == "true"

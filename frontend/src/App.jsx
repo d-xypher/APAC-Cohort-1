@@ -4,16 +4,20 @@ import { AgentPanel } from './components/AgentPanel';
 import { Timeline } from './components/Timeline';
 import { NodeDetailsPanel } from './components/NodeDetailsPanel';
 import { CommandBar } from './components/CommandBar';
-import { createEventStream, dagApi } from './services/api';
-import { FaMoon, FaPlay, FaSun, FaSync, FaUndoAlt } from 'react-icons/fa';
+import { NodeModal } from './components/NodeModal';
+import { CascadePreviewModal } from './components/CascadePreviewModal';
+import { ConflictResolutionModal } from './components/ConflictResolutionModal';
+import { CommandPalette } from './components/CommandPalette';
+import { OnboardingModal } from './components/OnboardingModal';
+import { createEventStream, dagApi, chatApi } from './services/api';
+import { FaMoon, FaPlus, FaSun, FaSync, FaUndoAlt, FaKeyboard } from 'react-icons/fa';
 
 const AGENT_EVENT_LIMIT = 120;
 const HIGHLIGHT_DURATION_MS = 6000;
 const REFRESH_DEBOUNCE_MS = 450;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 15000;
-
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const ONBOARDING_KEY = 'cascade-onboarding-complete';
 
 const getInitialTheme = () => {
   if (typeof window === 'undefined') {
@@ -21,6 +25,11 @@ const getInitialTheme = () => {
   }
   const storedTheme = window.localStorage.getItem('cascade-theme');
   return storedTheme === 'light' ? 'light' : 'dark';
+};
+
+const hasCompletedOnboarding = () => {
+  if (typeof window === 'undefined') return true;
+  return window.localStorage.getItem(ONBOARDING_KEY) === 'true';
 };
 
 const appendAgentEvent = (setEvents, event) => {
@@ -45,14 +54,26 @@ function App() {
   const [cascadingNodeIds, setCascadingNodeIds] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [latestSnapshotId, setLatestSnapshotId] = useState(null);
-  const [isSimulating, setIsSimulating] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
   const [isSeeding, setIsSeeding] = useState(false);
   const [isLoadingGraph, setIsLoadingGraph] = useState(false);
   const [isStreamConnected, setIsStreamConnected] = useState(false);
+  const [isChatting, setIsChatting] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [uiError, setUiError] = useState('');
   const [uiSuccess, setUiSuccess] = useState('');
+  
+  // Modal states
+  const [showNodeModal, setShowNodeModal] = useState(false);
+  const [editingNode, setEditingNode] = useState(null);
+  const [showCascadePreview, setShowCascadePreview] = useState(false);
+  const [cascadePreviewData, setCascadePreviewData] = useState(null);
+  const [pendingCascade, setPendingCascade] = useState(null);
+  const [showConflictResolution, setShowConflictResolution] = useState(false);
+  const [conflictData, setConflictData] = useState({ conflicts: [], options: [] });
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(!hasCompletedOnboarding());
+  const [recentCommands, setRecentCommands] = useState([]);
 
   const streamRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -154,6 +175,21 @@ function App() {
         try {
           const data = JSON.parse(event.data);
           appendAgentEvent(setAgentEvents, data);
+
+          const eventType = data?.event_type;
+          const payload = data?.data || {};
+          if (eventType === 'resolution_options' && payload.node_id) {
+            setConflictData((prev) => ({
+              ...prev,
+              options: Array.isArray(payload.options) ? payload.options : prev.options,
+            }));
+          } else if (eventType === 'conflict_detected') {
+            setConflictData((prev) => ({
+              ...prev,
+              conflicts: [...(prev.conflicts || []), payload],
+            }));
+          }
+
           scheduleGraphRefresh();
         } catch {
           // Ignore malformed events and keep the stream alive.
@@ -235,95 +271,80 @@ function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   }, []);
 
-  const simulateDisruption = useCallback(async () => {
-    if (isSimulating || isLoadingGraph || isSeeding) {
-      return;
-    }
+  const handleCommand = useCallback(async (query) => {
+    if (isChatting || isLoadingGraph || isSeeding) return;
 
-    setIsSimulating(true);
+    setIsChatting(true);
     setUiError('');
     setUiSuccess('');
-
-    const standup = nodes.find((n) => n.title?.toLowerCase().includes('standup'));
-    if (!standup || !standup.start_time) {
-      setUiError('Seed demo data first so a standup node exists before simulating.');
-      setIsSimulating(false);
-      return;
-    }
-
-    const oldTime = new Date(standup.start_time);
-    if (Number.isNaN(oldTime.getTime())) {
-      setUiError('Standup node has an invalid start time.');
-      setIsSimulating(false);
-      return;
-    }
-
-    const newTime = new Date(oldTime.getTime() + 90 * 60000);
-
+    
     try {
       appendAgentEvent(setAgentEvents, {
-        agent: 'Orchestrator',
-        action: 'Trigger Detected',
-        message: `Standup moved to ${newTime.toLocaleTimeString()}`,
+        agent: 'Chat Agent',
+        action: 'Natural Language',
+        message: `Processing: "${query}"`,
       });
 
-      await wait(250);
+      const context = `Current time: ${new Date().toISOString()}. ${
+        selectedNode 
+          ? `Selected node: "${selectedNode.title}" at ${selectedNode.start_time}` 
+          : 'No node selected.'
+      }`;
 
-      appendAgentEvent(setAgentEvents, {
-        agent: 'Calendar Agent',
-        action: 'Updating',
-        message: 'Applying standup time change.',
+      let responseText = '';
+      let toolCalls = [];
+
+      await chatApi.streamMessage(query, context, {
+        onText: (chunk) => {
+          responseText += chunk;
+        },
+        onToolCall: (name, args) => {
+          toolCalls.push({ name, args });
+          appendAgentEvent(setAgentEvents, {
+            agent: 'Chat Agent',
+            action: 'Tool Call',
+            message: `Executing: ${name}`,
+          });
+        },
+        onToolResult: (name, result) => {
+          appendAgentEvent(setAgentEvents, {
+            agent: 'Chat Agent',
+            action: 'Tool Result',
+            message: result.length > 80 ? result.substring(0, 80) + '...' : result,
+          });
+        },
+        onDone: () => {
+          appendAgentEvent(setAgentEvents, {
+            agent: 'Chat Agent',
+            action: 'Complete',
+            message: 'Response delivered',
+          });
+        },
+        onError: (error) => {
+          setUiError(error.message || 'Chat processing failed');
+        },
       });
 
-      const res = await dagApi.triggerCascade({
-        trigger_node_id: standup.id,
-        new_start_time: newTime.toISOString(),
-        description: 'Standup moved via calendar UI',
-      });
-
-      const affected = Array.isArray(res?.changes)
-        ? res.changes
-            .map((c) => c.node_id)
-            .filter((id) => typeof id === 'number')
-        : [];
-
-      appendAgentEvent(setAgentEvents, {
-        agent: 'Task Agent',
-        action: 'Propagating Cascade',
-        message: `Adjusted ${Math.max(affected.length - 1, 0)} downstream node(s).`,
-      });
-
-      setCascadingNodeIds(affected);
-      setLatestSnapshotId(res?.snapshot_id || null);
-      setSelectedNodeId(standup.id);
-      await fetchGraph();
-      setUiSuccess(
-        `Cascade applied: ${Math.max(affected.length - 1, 0)} downstream node(s) adjusted.`,
+      const calendarModified = toolCalls.some(tc => 
+        tc.name === 'reschedule_event' || tc.name === 'create_event'
       );
-
-      appendAgentEvent(setAgentEvents, {
-        agent: 'Notes Agent',
-        action: 'Logging',
-        message: 'Captured cascade summary for audit trail.',
-      });
-
-      if (clearHighlightsTimeoutRef.current) {
-        clearTimeout(clearHighlightsTimeoutRef.current);
+      
+      if (calendarModified) {
+        await fetchGraph();
+        setUiSuccess(`AI executed calendar action. ${responseText.substring(0, 100)}${responseText.length > 100 ? '...' : ''}`);
+      } else if (responseText) {
+        setUiSuccess(responseText.substring(0, 150) + (responseText.length > 150 ? '...' : ''));
       }
-      clearHighlightsTimeoutRef.current = setTimeout(() => {
-        setCascadingNodeIds([]);
-      }, HIGHLIGHT_DURATION_MS);
+
     } catch (err) {
-      setUiError(err.message || 'Unable to run cascade simulation.');
+      setUiError(err.message || 'Unable to process natural language command.');
     } finally {
-      setIsSimulating(false);
+      setIsChatting(false);
     }
-  }, [fetchGraph, isLoadingGraph, isSeeding, isSimulating, nodes]);
+  }, [fetchGraph, isLoadingGraph, isSeeding, isChatting, selectedNode]);
 
   const undoCascade = useCallback(async () => {
-    if (!latestSnapshotId || isUndoing) {
-      return;
-    }
+    if (!latestSnapshotId || isUndoing) return;
 
     setIsUndoing(true);
     setUiError('');
@@ -339,57 +360,229 @@ function App() {
       setCascadingNodeIds([]);
       setSelectedNodeId(null);
       await fetchGraph();
-      setUiSuccess('Undo complete. Workflow restored to the previous snapshot.');
+      setUiSuccess('Undo complete. Workflow restored.');
     } catch (err) {
-      setUiError(err.message || 'Failed to undo the latest cascade.');
+      setUiError(err.message || 'Failed to undo cascade.');
     } finally {
       setIsUndoing(false);
     }
   }, [fetchGraph, isUndoing, latestSnapshotId]);
 
-  const handleCommand = useCallback(async (query) => {
-    if (isSimulating || isLoadingGraph || isSeeding || nodes.length === 0) return;
+  const handleOpenCreateNode = useCallback(() => {
+    setEditingNode(null);
+    setShowNodeModal(true);
+  }, []);
 
-    setIsSimulating(true);
+  const handleOpenEditNode = useCallback((node) => {
+    setEditingNode(node);
+    setShowNodeModal(true);
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // KEYBOARD SHORTCUTS
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Cmd/Ctrl + K = Command Palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      }
+      // Escape closes modals
+      if (e.key === 'Escape') {
+        if (showCommandPalette) setShowCommandPalette(false);
+      }
+      // N = New node (when no modal is open)
+      if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !showCommandPalette && !showNodeModal) {
+        const activeElement = document.activeElement;
+        if (activeElement.tagName !== 'INPUT' && activeElement.tagName !== 'TEXTAREA') {
+          e.preventDefault();
+          handleOpenCreateNode();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleOpenCreateNode, showCommandPalette, showNodeModal]);
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // NODE CRUD HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  const handleSaveNode = useCallback(async (nodeData) => {
     setUiError('');
-    setUiSuccess('');
+    try {
+      if (editingNode) {
+        await dagApi.updateNode(editingNode.id, nodeData);
+        setUiSuccess(`Updated "${nodeData.title}"`);
+      } else {
+        await dagApi.createNode(nodeData);
+        setUiSuccess(`Created "${nodeData.title}"`);
+      }
+      setShowNodeModal(false);
+      setEditingNode(null);
+      await fetchGraph();
+    } catch (err) {
+      setUiError(err.message || 'Failed to save node.');
+    }
+  }, [editingNode, fetchGraph]);
+
+  const handleDeleteNode = useCallback(async (nodeId) => {
+    setUiError('');
+    try {
+      await dagApi.deleteNode(nodeId);
+      setShowNodeModal(false);
+      setEditingNode(null);
+      setSelectedNodeId(null);
+      setUiSuccess('Node deleted successfully.');
+      await fetchGraph();
+    } catch (err) {
+      setUiError(err.message || 'Failed to delete node.');
+    }
+  }, [fetchGraph]);
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // DRAG-TO-RESCHEDULE WITH CASCADE PREVIEW
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  const handleNodeDragEnd = useCallback(async (nodeId, newTime) => {
+    if (!nodeId || !newTime) return;
+    
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    setUiError('');
+    appendAgentEvent(setAgentEvents, {
+      agent: 'Cascade Engine',
+      action: 'Preview Request',
+      message: `Calculating impact of moving "${node.title}"...`,
+    });
+
+    try {
+      const preview = await dagApi.previewCascade(nodeId, newTime);
+      
+      setCascadePreviewData(preview);
+      setPendingCascade({ nodeId, newTime, node });
+      
+      // Check for conflicts
+      if (preview.has_conflicts && preview.conflicts.length > 0) {
+        const resolutionRes = await dagApi.getResolutionOptions(nodeId, preview.conflicts);
+        // Show conflict resolution modal instead of preview
+        setConflictData({
+          conflicts: preview.conflicts,
+          options: Array.isArray(resolutionRes?.options) ? resolutionRes.options : [],
+        });
+        setShowConflictResolution(true);
+      } else {
+        setShowCascadePreview(true);
+      }
+    } catch (err) {
+      setUiError(err.message || 'Failed to preview cascade.');
+    }
+  }, [nodes]);
+
+  const handleConfirmCascade = useCallback(async () => {
+    if (!pendingCascade) return;
+    
+    setShowCascadePreview(false);
+    setUiError('');
     
     try {
-      appendAgentEvent(setAgentEvents, {
-        agent: 'Orchestrator',
-        action: 'Natural Language',
-        message: `Parsing query: "${query}"`,
-      });
-
-      // Simple mock: just trigger a cascade on the first available node
-      const targetNode = nodes[0];
-      await wait(600);
-
-      const oldTime = new Date(targetNode.start_time);
-      const newTime = new Date(Number.isNaN(oldTime.getTime()) ? Date.now() : oldTime.getTime() + 60 * 60000);
-
       const res = await dagApi.triggerCascade({
-        trigger_node_id: targetNode.id,
-        new_start_time: newTime.toISOString(),
-        description: `NLP command: ${query}`,
+        trigger_node_id: pendingCascade.nodeId,
+        new_start_time: pendingCascade.newTime,
+        description: `Drag-to-reschedule: ${pendingCascade.node.title}`,
       });
-
+      
       const affected = Array.isArray(res?.changes)
-        ? res.changes.map((c) => c.node_id).filter((id) => typeof id === 'number')
+        ? res.changes.map(c => c.node_id).filter(id => typeof id === 'number')
         : [];
-
+      
       setCascadingNodeIds(affected);
       setLatestSnapshotId(res?.snapshot_id || null);
-      setSelectedNodeId(targetNode.id);
+      setSelectedNodeId(pendingCascade.nodeId);
       await fetchGraph();
-
-      setUiSuccess(`AI processed command. ${Math.max(affected.length - 1, 0)} nodes adjusted.`);
+      setUiSuccess(`Cascade applied: ${Math.max(affected.length - 1, 0)} node(s) adjusted.`);
+      
+      if (clearHighlightsTimeoutRef.current) {
+        clearTimeout(clearHighlightsTimeoutRef.current);
+      }
+      clearHighlightsTimeoutRef.current = setTimeout(() => {
+        setCascadingNodeIds([]);
+      }, HIGHLIGHT_DURATION_MS);
     } catch (err) {
-      setUiError(err.message || 'Unable to process natural language command.');
+      setUiError(err.message || 'Failed to apply cascade.');
     } finally {
-      setIsSimulating(false);
+      setPendingCascade(null);
+      setCascadePreviewData(null);
     }
-  }, [fetchGraph, isLoadingGraph, isSeeding, isSimulating, nodes]);
+  }, [pendingCascade, fetchGraph]);
+
+  const handleSelectResolution = useCallback(async (resolution) => {
+    setShowConflictResolution(false);
+    setUiSuccess(`Applied resolution: ${resolution.title}`);
+    if (!pendingCascade) return;
+
+    const adjustedTime = new Date(pendingCascade.newTime);
+    const action = resolution?.action || {};
+    if (action.type === 'adjust_trigger' && Number.isFinite(action.delta_minutes)) {
+      adjustedTime.setMinutes(adjustedTime.getMinutes() + action.delta_minutes);
+    }
+
+    const refreshedPreview = await dagApi.previewCascade(pendingCascade.nodeId, adjustedTime);
+    setCascadePreviewData(refreshedPreview);
+    setPendingCascade((prev) => (prev ? { ...prev, newTime: adjustedTime } : prev));
+    setShowCascadePreview(true);
+  }, [pendingCascade]);
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // COMMAND PALETTE HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  const handleExecuteCommand = useCallback((command) => {
+    // Add to recent commands
+    setRecentCommands(prev => {
+      const filtered = prev.filter(c => c.id !== command.id);
+      return [command, ...filtered].slice(0, 5);
+    });
+
+    switch (command.action) {
+      case 'ADD_NODE':
+        handleOpenCreateNode();
+        break;
+      case 'SEED_DEMO':
+        seedData();
+        break;
+      case 'UNDO_CASCADE':
+        undoCascade();
+        break;
+      case 'SELECT_NODE':
+        if (command.payload) {
+          setSelectedNodeId(command.payload.id);
+          handleOpenEditNode(command.payload);
+        }
+        break;
+      default:
+        console.log('Unknown command:', command);
+    }
+  }, [handleOpenCreateNode, seedData, undoCascade, handleOpenEditNode]);
+
+  const handleNaturalLanguage = useCallback((query) => {
+    handleCommand(query);
+  }, [handleCommand]);
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // ONBOARDING
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  const handleOnboardingComplete = useCallback(async () => {
+    window.localStorage.setItem(ONBOARDING_KEY, 'true');
+    setShowOnboarding(false);
+    // Auto-seed demo data after onboarding
+    await seedData();
+  }, [seedData]);
 
   return (
     <div className="app-container">
@@ -400,22 +593,28 @@ function App() {
             {isStreamConnected ? 'Live' : 'Reconnecting'}
           </span>
         </div>
-        <CommandBar onCommand={handleCommand} />
+        <CommandBar onCommand={handleCommand} disabled={isChatting} />
         
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button
+            className="btn-icon"
+            onClick={() => setShowCommandPalette(true)}
+            title="Command Palette (⌘K)"
+          >
+            <FaKeyboard />
+          </button>
           <button
             className="btn-icon"
             onClick={handleThemeToggle}
             title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            disabled={isLoadingGraph}
           >
             {theme === 'dark' ? <FaSun /> : <FaMoon />}
           </button>
           <button
             className="btn-icon"
             onClick={seedData}
-            title={isSeeding ? 'Seeding demo data...' : 'Reset to Demo State'}
-            disabled={isSeeding || isLoadingGraph || isSimulating || isUndoing}
+            title="Reset to Demo State"
+            disabled={isSeeding || isLoadingGraph || isUndoing || isChatting}
           >
             <FaSync className={isSeeding ? 'spin' : ''} />
           </button>
@@ -424,51 +623,52 @@ function App() {
               className="btn-icon"
               onClick={undoCascade}
               style={{ color: 'var(--warning)', borderColor: 'var(--warning)' }}
-              disabled={isUndoing || isSeeding || isLoadingGraph || isSimulating}
+              disabled={isUndoing || isSeeding || isLoadingGraph || isChatting}
             >
-              <FaUndoAlt style={{ marginRight: '8px' }} /> {isUndoing ? 'Undoing...' : 'Undo Cascade'}
+              <FaUndoAlt style={{ marginRight: '8px' }} /> {isUndoing ? 'Undoing...' : 'Undo'}
             </button>
           )}
           <button
-            className="btn-primary primary"
-            onClick={simulateDisruption}
-            disabled={isSimulating || isSeeding || isLoadingGraph || isUndoing}
-            aria-busy={isSimulating}
+            className="btn-primary"
+            onClick={handleOpenCreateNode}
+            disabled={isLoadingGraph}
           >
-            {isSimulating ? <span className="inline-loader" aria-hidden="true" /> : <FaPlay style={{ marginRight: '8px' }} />}
-            {isSimulating ? 'Cascading...' : 'Simulate Demo Disruption'}
+            <FaPlus style={{ marginRight: '8px' }} />
+            Add Node
           </button>
         </div>
       </header>
 
       <section className="workflow-strip glass-panel" aria-label="Orchestrator workflow summary">
         <div className="workflow-strip-header">
-          <h2>Orchestrator Control Plane</h2>
-          <p>Trigger -&gt; Propagation -&gt; Logging</p>
+          <h2>Intelligent Orchestrator</h2>
+          <p>Intent → Conflict Detection → Resolution → Cascade</p>
         </div>
         <div className="workflow-track">
-          <span className="workflow-chip orchestrator">Orchestrator</span>
-          <span className="workflow-arrow">-&gt;</span>
-          <span className="workflow-chip">Calendar Agent</span>
-          <span className="workflow-arrow">-&gt;</span>
-          <span className="workflow-chip">Task Agent</span>
-          <span className="workflow-arrow">-&gt;</span>
-          <span className="workflow-chip">Notes Agent</span>
+          <span className="workflow-chip orchestrator">Parse Intent</span>
+          <span className="workflow-arrow">→</span>
+          <span className="workflow-chip">Detect Conflicts</span>
+          <span className="workflow-arrow">→</span>
+          <span className="workflow-chip">Generate Resolutions</span>
+          <span className="workflow-arrow">→</span>
+          <span className="workflow-chip">Execute Cascade</span>
         </div>
         <div className="workflow-note">
-          All schedule times in the DAG, timeline, and details panel are shown in your local timezone.
+          Drag any node to reschedule • Press ⌘K for command palette • Type naturally in the command bar
         </div>
       </section>
 
       {uiError && (
         <div className="error-banner" role="alert">
           {uiError}
+          <button className="banner-close" onClick={() => setUiError('')}>×</button>
         </div>
       )}
 
       {uiSuccess && (
         <div className="success-banner" role="status">
           {uiSuccess}
+          <button className="banner-close" onClick={() => setUiSuccess('')}>×</button>
         </div>
       )}
 
@@ -483,9 +683,9 @@ function App() {
         
         <div className="graph-section glass-panel">
           <div className="graph-header-overlay">
-            <h2 style={{ fontSize: '1.2rem' }}>Workflow Dependency Graph (DAG)</h2>
+            <h2 style={{ fontSize: '1.2rem' }}>Workflow Dependency Graph</h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Watch the physics of your day (local time)
+              Drag nodes to reschedule • Double-click to edit
             </p>
           </div>
           <DAGGraph
@@ -494,6 +694,8 @@ function App() {
             cascadingNodeIds={cascadingNodeIds}
             selectedNodeId={selectedNodeId}
             onNodeSelect={handleNodeSelect}
+            onNodeDragEnd={handleNodeDragEnd}
+            onNodeDoubleClick={handleOpenEditNode}
             isLoading={isLoadingGraph}
           />
         </div>
@@ -503,12 +705,68 @@ function App() {
             nodes={nodes}
             selectedNodeId={selectedNodeId}
             onNodeSelect={handleNodeSelect}
+            onNodeDoubleClick={handleOpenEditNode}
             cascadingNodeIds={cascadingNodeIds}
             isLoading={isLoadingGraph}
           />
-          <NodeDetailsPanel node={selectedNode} />
+          <NodeDetailsPanel 
+            node={selectedNode} 
+            onEdit={handleOpenEditNode}
+            onDelete={handleDeleteNode}
+          />
         </div>
       </main>
+
+      {/* Modals */}
+      {showNodeModal && (
+        <NodeModal
+          isOpen={showNodeModal}
+          onClose={() => { setShowNodeModal(false); setEditingNode(null); }}
+          onSave={handleSaveNode}
+          onDelete={handleDeleteNode}
+          node={editingNode}
+        />
+      )}
+
+      {showCascadePreview && (
+        <CascadePreviewModal
+          isOpen={showCascadePreview}
+          onClose={() => { setShowCascadePreview(false); setPendingCascade(null); }}
+          onConfirm={handleConfirmCascade}
+          preview={cascadePreviewData}
+          triggerNode={pendingCascade?.node}
+          newTime={pendingCascade?.newTime}
+        />
+      )}
+
+      {showConflictResolution && (
+        <ConflictResolutionModal
+          isOpen={showConflictResolution}
+          onClose={() => setShowConflictResolution(false)}
+          onSelectResolution={handleSelectResolution}
+          conflicts={conflictData.conflicts}
+          resolutionOptions={conflictData.options}
+        />
+      )}
+
+      {showCommandPalette && (
+        <CommandPalette
+          isOpen={showCommandPalette}
+          onClose={() => setShowCommandPalette(false)}
+          onExecuteCommand={handleExecuteCommand}
+          onNaturalLanguage={handleNaturalLanguage}
+          nodes={nodes}
+          recentCommands={recentCommands}
+          canUndo={!!latestSnapshotId}
+        />
+      )}
+
+      {showOnboarding && (
+        <OnboardingModal
+          isOpen={showOnboarding}
+          onComplete={handleOnboardingComplete}
+        />
+      )}
     </div>
   );
 }

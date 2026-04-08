@@ -103,6 +103,32 @@ def reschedule_event(event_id: str, new_start_datetime_iso: str, new_end_datetim
     except Exception as e:
         return f"Error updating event: {str(e)}"
 
+@mcp_cal.tool()
+def create_event(summary: str, start_datetime_iso: str, end_datetime_iso: str, description: str = "") -> str:
+    """Creates a calendar event and returns the created event id in a stable format."""
+    try:
+        service = get_calendar_service()
+        event = {
+            "summary": summary,
+            "description": description,
+            "start": {
+                "dateTime": start_datetime_iso,
+                "timeZone": "UTC",
+            },
+            "end": {
+                "dateTime": end_datetime_iso,
+                "timeZone": "UTC",
+            },
+        }
+        created_event = service.events().insert(calendarId="primary", body=event).execute()
+        return (
+            f"Successfully created event '{created_event.get('summary', summary)}' "
+            f"[ID: {created_event.get('id')}] starting at "
+            f"{created_event.get('start', {}).get('dateTime', start_datetime_iso)}"
+        )
+    except Exception as e:
+        return f"Error creating event: {str(e)}"
+
 if __name__ == "__main__":
     # Provides stdio mapping for MCP protocol
     mcp_cal.run()

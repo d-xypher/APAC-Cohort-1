@@ -1,0 +1,26 @@
+# Git and editor
+.git
+.gitignore
+.vscode
+
+# Python cache and virtualenvs
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+backend/venv
+.venv
+
+# Frontend build and deps
+frontend/node_modules
+frontend/dist
+
+# Secrets and local env
+**/.env
+**/.env.*
+backend/credentials.json
+backend/token.json
+
+# Local database and logs
+cascade.db
+*.log

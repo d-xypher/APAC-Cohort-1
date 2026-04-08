@@ -28,12 +28,20 @@ const detailRows = (node) => [
   ['Source', node.source || 'Manual'],
 ];
 
-export const NodeDetailsPanel = ({ node }) => {
+export const NodeDetailsPanel = ({ node, onEdit, onDelete }) => {
   if (!node) {
     return (
       <div className="glass-panel details-panel details-panel-empty">
         <h3>Node Details</h3>
         <p>Select a node in the DAG or timeline to inspect schedule and dependency metadata.</p>
+        <div style={{ marginTop: 16, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <strong>Tips:</strong>
+          <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+            <li>Click a node to view details</li>
+            <li>Double-click to edit</li>
+            <li>Drag nodes to reschedule</li>
+          </ul>
+        </div>
       </div>
     );
   }
@@ -42,7 +50,48 @@ export const NodeDetailsPanel = ({ node }) => {
     <div className="glass-panel details-panel glow">
       <div className="details-header">
         <h3>{node.title || 'Untitled Node'}</h3>
-        <span className="details-status">{node.status || 'unknown'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="details-status">{node.status || 'unknown'}</span>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button
+          type="button"
+          onClick={() => onEdit?.(node)}
+          className="btn-secondary"
+          style={{ 
+            flex: 1, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            gap: 6,
+            padding: '8px 12px',
+            fontSize: '0.8rem',
+          }}
+        >
+          <span>✏️</span>
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm(`Delete "${node.title}"? This will affect dependent tasks.`)) {
+              onDelete?.(node.id);
+            }
+          }}
+          className="btn-danger"
+          style={{ 
+            padding: '8px 12px',
+            fontSize: '0.8rem',
+            background: 'transparent',
+            border: '1px solid var(--error)',
+            color: 'var(--error)',
+          }}
+        >
+          🗑️
+        </button>
       </div>
 
       {node.description && (
@@ -64,6 +113,35 @@ export const NodeDetailsPanel = ({ node }) => {
           <p>{node.cascade_note}</p>
         </div>
       )}
+
+      {/* Quick Actions */}
+      <div style={{ 
+        marginTop: 16, 
+        paddingTop: 16, 
+        borderTop: '1px solid var(--border-subtle)',
+      }}>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 8 }}>
+          Quick Actions
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-chip"
+            onClick={() => onEdit?.({ ...node, status: 'completed' })}
+            style={{ fontSize: '0.7rem', padding: '4px 10px' }}
+          >
+            ✓ Mark Done
+          </button>
+          <button
+            type="button"
+            className="btn-chip"
+            onClick={() => onEdit?.({ ...node, priority: (node.priority || 5) - 1 })}
+            style={{ fontSize: '0.7rem', padding: '4px 10px' }}
+          >
+            ⬆️ Priority
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

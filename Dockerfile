@@ -1,30 +1,33 @@
-# Multi-stage build for Cloud Run
+# syntax=docker/dockerfile:1
 
-# Stage 1: Build React Frontend
-FROM node:20-alpine AS frontend
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
-
-# Stage 2: Build FastAPI Backend
+# Cloud Run deployment image for the FastAPI backend.
 FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8080
+
 WORKDIR /app
 
-# Install system dependencies for some python packages like networkx
+# Keep system packages minimal for a smaller and safer runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies first to maximize Docker layer caching.
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --upgrade pip && pip install -r /app/backend/requirements.txt
 
-COPY backend/ ./backend/
-COPY --from=frontend /app/frontend/dist ./static/
+# Copy backend source code.
+COPY backend /app/backend
 
-# Cloud Run uses PORT env var
-ENV PORT=8080
+# Run as non-root user for better container security.
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8080
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Cloud Run injects PORT at runtime.
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]

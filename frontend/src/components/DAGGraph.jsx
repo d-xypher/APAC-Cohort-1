@@ -70,13 +70,15 @@ export const DAGGraph = ({
   cascadingNodeIds,
   selectedNodeId,
   onNodeSelect,
-  onPreviewCascade,
+  onNodeDragEnd,
+  onNodeDoubleClick,
   isLoading = false,
 }) => {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [tooltip, setTooltip] = useState(null);
+  const [dragPreview, setDragPreview] = useState(null);
 
   /* Responsive container sizing */
   useEffect(() => {
@@ -232,6 +234,10 @@ export const DAGGraph = ({
       .on('click', (event, d) => {
         event.stopPropagation();
         if (onNodeSelect) onNodeSelect(d);
+      })
+      .on('dblclick', (event, d) => {
+        event.stopPropagation();
+        if (onNodeDoubleClick) onNodeDoubleClick(d);
       });
 
     // Node background rect
@@ -305,34 +311,59 @@ export const DAGGraph = ({
       node.attr('transform', (d) => `translate(${d.x},${d.y})`);
     });
 
-    /* ── Drag behavior ── */
-    let dragTimeout = null;
+    /* ── Drag behavior with time calculation ── */
+    let dragStartTime = null;
+    let dragStartY = null;
     function drag(sim) {
-      function started(event) {
+      function started(event, d) {
         if (!event.active) sim.alphaTarget(0.3).restart();
         event.subject.fx = event.subject.x;
         event.subject.fy = event.subject.y;
+        dragStartY = event.subject.y;
+        dragStartTime = d.start_time ? new Date(d.start_time) : new Date();
       }
-      function dragged(event) {
+      function dragged(event, d) {
         event.subject.fx = event.x;
         event.subject.fy = event.y;
-        if (onPreviewCascade) {
-          clearTimeout(dragTimeout);
-          dragTimeout = setTimeout(() => {
-            onPreviewCascade(event.subject.id, new Date());
-          }, 100);
+        
+        // Calculate time delta based on vertical drag (30 pixels = 30 minutes)
+        const deltaY = event.y - dragStartY;
+        const deltaMinutes = Math.round(deltaY / 2); // 2 pixels per minute
+        
+        if (dragStartTime && Math.abs(deltaMinutes) >= 5) {
+          const newTime = new Date(dragStartTime.getTime() + deltaMinutes * 60 * 1000);
+          setDragPreview({
+            nodeId: d.id,
+            nodeTitle: d.title,
+            originalTime: dragStartTime,
+            newTime: newTime,
+            deltaMinutes: deltaMinutes,
+          });
         }
       }
-      function ended(event) {
+      function ended(event, d) {
         if (!event.active) sim.alphaTarget(0);
         event.subject.fx = null;
         event.subject.fy = null;
+        
+        // Trigger cascade preview on drag end if significant change
+        const deltaY = event.y - dragStartY;
+        const deltaMinutes = Math.round(deltaY / 2);
+        
+        if (dragStartTime && Math.abs(deltaMinutes) >= 5 && onNodeDragEnd) {
+          const newTime = new Date(dragStartTime.getTime() + deltaMinutes * 60 * 1000);
+          onNodeDragEnd(d.id, newTime);
+        }
+        
+        setDragPreview(null);
+        dragStartY = null;
+        dragStartTime = null;
       }
       return d3.drag().on('start', started).on('drag', dragged).on('end', ended);
     }
 
     return () => simulation.stop();
-  }, [nodesData, edgesData, cascadingNodeIds, selectedNodeId, dimensions, onNodeSelect, onPreviewCascade]);
+  }, [nodesData, edgesData, cascadingNodeIds, selectedNodeId, dimensions, onNodeSelect, onNodeDragEnd, onNodeDoubleClick]);
 
   return (
     <div
@@ -448,6 +479,54 @@ export const DAGGraph = ({
               {tooltip.data.cascade_note}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Drag Preview Overlay */}
+      {dragPreview && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'var(--bg-tertiary)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 20px',
+            zIndex: 1000,
+            boxShadow: 'var(--shadow-lg)',
+            minWidth: 280,
+            animation: 'fadeIn 0.15s ease-out',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
+            ⏱️ Reschedule Preview
+          </div>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+            <strong>{dragPreview.nodeTitle}</strong>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ textDecoration: 'line-through' }}>
+              {dragPreview.originalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <span style={{ color: 'var(--accent)' }}>→</span>
+            <span style={{ color: dragPreview.deltaMinutes > 0 ? 'var(--warning)' : 'var(--success)', fontWeight: 600 }}>
+              {dragPreview.newTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <span style={{ 
+              fontSize: '0.7rem', 
+              background: dragPreview.deltaMinutes > 0 ? 'var(--warning-dim)' : 'var(--success-dim)', 
+              color: dragPreview.deltaMinutes > 0 ? 'var(--warning)' : 'var(--success)',
+              padding: '2px 6px',
+              borderRadius: 'var(--radius-sm)',
+            }}>
+              {dragPreview.deltaMinutes > 0 ? '+' : ''}{dragPreview.deltaMinutes}m
+            </span>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 8 }}>
+            Release to preview cascade effects
+          </div>
         </div>
       )}
     </div>

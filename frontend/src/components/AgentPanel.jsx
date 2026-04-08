@@ -50,7 +50,7 @@ export const AgentPanel = ({ events, isStreamConnected, nowMs }) => {
           return (
             <div key={agent.name} className={`agent-item ${isActive ? 'active' : ''}`}>
               <div className={`status-indicator ${isActive ? 'active' : ''}`}></div>
-              <div style={{ color: isActive ? 'var(--primary-accent)' : 'var(--text-main)', fontSize: '1.2rem'}}>
+              <div style={{ color: isActive ? 'var(--cyan)' : 'var(--text-primary)', fontSize: '1.2rem'}}>
                 {agent.icon}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>

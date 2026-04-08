@@ -2,9 +2,9 @@
 import json
 import logging
 import networkx as nx
-from typing import Any
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from backend.config import REDIS_URL
 from backend.models.dag import DAGNode, DAGEdge, CascadeSnapshot
 from backend.utils.datetime_utils import ensure_utc, parse_iso_datetime
 
@@ -51,6 +51,19 @@ class CascadeEngine:
             G.add_edge(e.from_node_id, e.to_node_id, edge_type=e.edge_type, weight=e.weight)
             
         return G
+
+    @staticmethod
+    def _effective_end_time(node: DAGNode):
+        """Resolve end_time; fall back to start + duration when explicit end_time is missing."""
+        end_time = ensure_utc(node.end_time)
+        if end_time:
+            return end_time
+
+        start_time = ensure_utc(node.start_time)
+        if start_time and node.duration_minutes:
+            return start_time + timedelta(minutes=node.duration_minutes)
+
+        return None
 
     def trigger_cascade(self, trigger_node_id: int, new_start_time: datetime, description: str) -> CascadeSnapshot:
         """
@@ -114,11 +127,18 @@ class CascadeEngine:
             "delta_mins": time_delta.total_seconds() / 60
         })
 
-        import redis
-        try:
-            redis_client = redis.Redis(host='localhost', port=6379, db=0)
-        except Exception:
-            redis_client = None
+        redis_client = None
+        if REDIS_URL:
+            try:
+                import redis
+
+                redis_client = redis.from_url(
+                    REDIS_URL,
+                    socket_connect_timeout=0.5,
+                    socket_timeout=0.5,
+                )
+            except Exception as exc:
+                logger.warning("Redis unavailable: %s", exc)
 
         for node_id in topo_order:
             if node_id == trigger_node_id:
@@ -137,19 +157,18 @@ class CascadeEngine:
 
                 # Cross-user pub/sub notification
                 # Check cross user notification
-                if getattr(p_node, 'owner_id', None) != getattr(node, 'owner_id', None) and redis_client:
+                if redis_client and getattr(p_node, 'owner_id', None) != getattr(node, 'owner_id', None):
                     try:
                         redis_client.publish(
                             f"user_{getattr(node, 'owner_id', 'unknown')}_notifications", 
                             json.dumps({"type": "cross_user_dependency", "from_node": p_node.id, "to_node": node.id})
                         )
-                    except redis.ConnectionError:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Redis notification publish failed: %s", exc)
 
-                p_node.end_time = ensure_utc(p_node.end_time)
-                if p_node.end_time:
-                    if not max_pred_end or p_node.end_time > max_pred_end:
-                        max_pred_end = p_node.end_time
+                pred_end = self._effective_end_time(p_node)
+                if pred_end and (not max_pred_end or pred_end > max_pred_end):
+                    max_pred_end = pred_end
                         
             # If our start time is now before the predecessor's end time, we MUST shift
             if max_pred_end and (not node_start or node_start < max_pred_end):
@@ -162,8 +181,8 @@ class CascadeEngine:
                     if redis_client:
                         try:
                             redis_client.publish("langgraph_resolution", json.dumps({"node_id": node.id, "violation": "deadline"}))
-                        except redis.ConnectionError:
-                            pass
+                        except Exception as exc:
+                            logger.warning("Redis resolution publish failed: %s", exc)
                     needs_resolution = True
 
                 if node_start:

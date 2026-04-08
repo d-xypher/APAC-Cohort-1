@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import timedelta
+from backend.config import ENABLE_SEED_ENDPOINTS
 from backend.db.database import get_db
 from backend.models.dag import DAGNode, DAGEdge, NodeType, NodeStatus, User
 from backend.utils.datetime_utils import utc_now
@@ -10,6 +11,8 @@ router = APIRouter(prefix="/api/seed", tags=["seed"])
 @router.post("/")
 def seed_demo_data(db: Session = Depends(get_db)):
     """Wipes the DB and pre-populates Priya's demo day."""
+    if not ENABLE_SEED_ENDPOINTS:
+        raise HTTPException(status_code=403, detail="Seeding is disabled in this environment.")
     
     # 1. Clear existing
     db.query(DAGEdge).delete()

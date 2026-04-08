@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion as Motion } from 'framer-motion';
 
 /* ─── Quick-action suggestions ────────────────────────────── */
 const SUGGESTIONS = [
@@ -56,7 +56,7 @@ const statusVariants = {
 };
 
 
-export const CommandBar = ({ onCommand }) => {
+export const CommandBar = ({ onCommand, disabled = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState(null); // null | 'processing' | 'success' | 'error'
@@ -64,29 +64,27 @@ export const CommandBar = ({ onCommand }) => {
   const inputRef = useRef(null);
   const timeoutRef = useRef(null);
 
-  // ── Keyboard shortcut: Cmd/Ctrl + K ──
+  const closeCommandBar = useCallback(() => {
+    setIsOpen(false);
+    setStatus(null);
+    setStatusMessage('');
+  }, []);
+
+  // ── Escape closes command bar when open ──
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setIsOpen((prev) => !prev);
-      }
       if (e.key === 'Escape') {
-        setIsOpen(false);
+        closeCommandBar();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [closeCommandBar, disabled]);
 
   // ── Auto-focus when opened ──
   useEffect(() => {
     if (isOpen && inputRef.current) {
       requestAnimationFrame(() => inputRef.current?.focus());
-    }
-    if (!isOpen) {
-      setStatus(null);
-      setStatusMessage('');
     }
   }, [isOpen]);
 
@@ -151,18 +149,18 @@ export const CommandBar = ({ onCommand }) => {
         {isOpen && (
           <>
             {/* Backdrop */}
-            <motion.div
+            <Motion.div
               className="command-overlay"
               variants={overlayVariants}
               initial="hidden"
               animate="visible"
               exit="exit"
               transition={{ duration: 0.15 }}
-              onClick={() => setIsOpen(false)}
+              onClick={closeCommandBar}
             />
 
             {/* Panel */}
-            <motion.div
+            <Motion.div
               className="command-container"
               variants={panelVariants}
               initial="hidden"
@@ -222,7 +220,7 @@ export const CommandBar = ({ onCommand }) => {
                 {/* Processing / Status indicator */}
                 <AnimatePresence>
                   {status && (
-                    <motion.div
+                    <Motion.div
                       className="command-status"
                       variants={statusVariants}
                       initial="hidden"
@@ -231,11 +229,11 @@ export const CommandBar = ({ onCommand }) => {
                     >
                       <span className={`command-status-dot ${status}`} />
                       <span className="command-status-text">{statusMessage}</span>
-                    </motion.div>
+                    </Motion.div>
                   )}
                 </AnimatePresence>
               </div>
-            </motion.div>
+            </Motion.div>
           </>
         )}
       </AnimatePresence>,
@@ -251,12 +249,13 @@ export const CommandBar = ({ onCommand }) => {
         onClick={() => setIsOpen(true)}
         type="button"
         aria-label="Open command bar"
+        disabled={disabled}
       >
         <svg className="command-hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
-        <span className="command-trigger-text">Tell Cascade what changed...</span>
-        <span className="command-trigger-kbd">⌘K</span>
+        <span className="command-trigger-text">{disabled ? 'Processing...' : 'Tell Cascade what changed...'}</span>
+        <span className="command-trigger-kbd">AI</span>
       </button>
 
       {/* Full command palette via Portal */}

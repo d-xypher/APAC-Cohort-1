@@ -83,6 +83,81 @@ export const dagApi = {
     };
   },
 
+  async getNode(nodeId) {
+    return request({
+      method: 'get',
+      url: `/dag/nodes/${nodeId}`,
+      fallbackMessage: 'Failed to load node.',
+    });
+  },
+
+  async createNode(nodeData) {
+    return request({
+      method: 'post',
+      url: '/dag/nodes',
+      data: nodeData,
+      fallbackMessage: 'Failed to create node.',
+    });
+  },
+
+  async updateNode(nodeId, nodeData) {
+    return request({
+      method: 'put',
+      url: `/dag/nodes/${nodeId}`,
+      data: nodeData,
+      fallbackMessage: 'Failed to update node.',
+    });
+  },
+
+  async deleteNode(nodeId) {
+    return request({
+      method: 'delete',
+      url: `/dag/nodes/${nodeId}`,
+      fallbackMessage: 'Failed to delete node.',
+    });
+  },
+
+  async createEdge(edgeData) {
+    return request({
+      method: 'post',
+      url: '/dag/edges',
+      data: edgeData,
+      fallbackMessage: 'Failed to create edge.',
+    });
+  },
+
+  async deleteEdge(edgeId) {
+    return request({
+      method: 'delete',
+      url: `/dag/edges/${edgeId}`,
+      fallbackMessage: 'Failed to delete edge.',
+    });
+  },
+
+  async previewCascade(nodeId, newStartTime) {
+    return request({
+      method: 'post',
+      url: '/dag/cascade/preview',
+      data: {
+        node_id: nodeId,
+        new_start_time: new Date(newStartTime).toISOString(),
+      },
+      fallbackMessage: 'Failed to preview cascade.',
+    });
+  },
+
+  async getResolutionOptions(nodeId, conflicts = []) {
+    return request({
+      method: 'post',
+      url: '/cascade/resolution-options',
+      data: {
+        node_id: Number(nodeId),
+        conflicts: Array.isArray(conflicts) ? conflicts : [],
+      },
+      fallbackMessage: 'Failed to generate conflict resolution options.',
+    });
+  },
+
   async seedDemo() {
     return request({
       method: 'post',
@@ -107,6 +182,101 @@ export const dagApi = {
       url: `/cascade/undo/${snapshotId}`,
       fallbackMessage: 'Failed to undo cascade.',
     });
+  },
+};
+
+/**
+ * Chat API for conversational AI with Gemini
+ */
+export const chatApi = {
+  /**
+   * Send a chat message (non-streaming).
+   * @param {string} message - The user's message
+   * @param {string} [context] - Optional context (e.g., current time, selected node info)
+   * @returns {Promise<{response: string, tool_calls: Array, tool_results: Array}>}
+   */
+  async sendMessage(message, context = null) {
+    return request({
+      method: 'post',
+      url: '/chat/',
+      data: { message, context },
+      fallbackMessage: 'Failed to get AI response.',
+    });
+  },
+
+  /**
+   * Create a streaming chat connection using SSE.
+   * @param {string} message - The user's message
+   * @param {string} [context] - Optional context
+   * @param {object} callbacks - Event callbacks
+   * @param {function} callbacks.onText - Called with text chunks
+   * @param {function} callbacks.onToolCall - Called when a tool is invoked
+   * @param {function} callbacks.onToolResult - Called with tool results
+   * @param {function} callbacks.onDone - Called when streaming completes
+   * @param {function} callbacks.onError - Called on error
+   * @returns {Promise<void>}
+   */
+  async streamMessage(message, context, callbacks) {
+    const { onText, onToolCall, onToolResult, onDone, onError } = callbacks;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message, context }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              switch (data.type) {
+                case 'text':
+                  onText?.(data.content);
+                  break;
+                case 'tool_call':
+                  onToolCall?.(data.name, data.args);
+                  break;
+                case 'tool_result':
+                  onToolResult?.(data.name, data.result);
+                  break;
+                case 'done':
+                  onDone?.(data.tool_calls, data.tool_results);
+                  break;
+                case 'error':
+                  onError?.(new Error(data.message));
+                  break;
+              }
+            } catch {
+              // Ignore malformed JSON
+            }
+          }
+        }
+      }
+    } catch (error) {
+      onError?.(error);
+      throw error;
+    }
   },
 };
 
