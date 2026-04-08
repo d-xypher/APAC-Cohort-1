@@ -2,12 +2,29 @@
 import json
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Float,
-    ForeignKey, Boolean
+    ForeignKey, Boolean, JSON
 )
 from sqlalchemy.orm import relationship
 from backend.db.database import Base
 from backend.utils.datetime_utils import ensure_utc, utc_now
 import enum
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(255), unique=True, nullable=False)
+    email = Column(String(255), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+class ReasoningAudit(Base):
+    """Stores the LLM's internal monologue for schedule changes."""
+    __tablename__ = "reasoning_audit"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id = Column(Integer, nullable=True)  # loosely coupled to cascade
+    trigger_node_id = Column(Integer, ForeignKey("dag_nodes.id"), nullable=True)
+    monologue = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
 
 class NodeType(str, enum.Enum):
@@ -47,7 +64,7 @@ class DAGNode(Base):
     priority = Column(Integer, nullable=True, default=3)
 
     # Metadata
-    owner = Column(String(255), nullable=True, default="Priya")
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     source = Column(String(100), nullable=True)  # "google_calendar", "todoist", "notion"
     cascade_note = Column(Text, nullable=True)    # Auto-generated note explaining adjustments
     
@@ -77,7 +94,7 @@ class DAGNode(Base):
             "duration_minutes": self.duration_minutes,
             "deadline": deadline.isoformat() if deadline else None,
             "priority": self.priority,
-            "owner": self.owner,
+            "owner_id": self.owner_id,
             "source": self.source,
             "cascade_note": self.cascade_note,
             "created_at": created_at.isoformat() if created_at else None,
@@ -94,6 +111,7 @@ class DAGEdge(Base):
     to_node_id = Column(Integer, ForeignKey("dag_nodes.id"), nullable=False)
     edge_type = Column(String(50), nullable=False, default="depends_on")  # depends_on, blocks, related_to
     weight = Column(Float, default=1.0)  # How strongly coupled
+    is_cross_user = Column(Boolean, default=False)
 
     from_node = relationship("DAGNode", foreign_keys=[from_node_id], back_populates="outgoing_edges")
     to_node = relationship("DAGNode", foreign_keys=[to_node_id], back_populates="incoming_edges")
@@ -105,6 +123,7 @@ class DAGEdge(Base):
             "to_node_id": self.to_node_id,
             "edge_type": self.edge_type,
             "weight": self.weight,
+            "is_cross_user": self.is_cross_user,
         }
 
 

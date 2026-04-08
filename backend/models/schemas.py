@@ -40,7 +40,7 @@ class DAGNodeResponse(BaseModel):
     duration_minutes: Optional[int]
     deadline: Optional[datetime]
     priority: Optional[int]
-    owner: Optional[str]
+    owner_id: Optional[int]
     source: Optional[str]
     cascade_note: Optional[str]
     created_at: datetime
@@ -60,6 +60,7 @@ class DAGEdgeResponse(BaseModel):
     to_node_id: int
     edge_type: str
     weight: float
+    is_cross_user: bool
 
 class TriggerCascadeRequest(BaseModel):
     trigger_node_id: int = Field(..., ge=1)

@@ -39,3 +39,4 @@ app.include_router(events.router)
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+

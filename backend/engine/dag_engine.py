@@ -114,6 +114,12 @@ class CascadeEngine:
             "delta_mins": time_delta.total_seconds() / 60
         })
 
+        import redis
+        try:
+            redis_client = redis.Redis(host='localhost', port=6379, db=0)
+        except Exception:
+            redis_client = None
+
         for node_id in topo_order:
             if node_id == trigger_node_id:
                 continue
@@ -128,6 +134,18 @@ class CascadeEngine:
             max_pred_end = None
             for p_id in preds:
                 p_node: DAGNode = G.nodes[p_id]['data']
+
+                # Cross-user pub/sub notification
+                # Check cross user notification
+                if getattr(p_node, 'owner_id', None) != getattr(node, 'owner_id', None) and redis_client:
+                    try:
+                        redis_client.publish(
+                            f"user_{getattr(node, 'owner_id', 'unknown')}_notifications", 
+                            json.dumps({"type": "cross_user_dependency", "from_node": p_node.id, "to_node": node.id})
+                        )
+                    except redis.ConnectionError:
+                        pass
+
                 p_node.end_time = ensure_utc(p_node.end_time)
                 if p_node.end_time:
                     if not max_pred_end or p_node.end_time > max_pred_end:
@@ -138,6 +156,16 @@ class CascadeEngine:
                 # Shift start_time to max_pred_end + 5 mins buffer
                 shift_to = max_pred_end + timedelta(minutes=5)
                 
+                needs_resolution = False
+                if node.deadline and shift_to > node.deadline:
+                    node.cascade_note = f"DEADLINE VIOLATION: Shift exceeds deadline. Triggering ResolutionNode."
+                    if redis_client:
+                        try:
+                            redis_client.publish("langgraph_resolution", json.dumps({"node_id": node.id, "violation": "deadline"}))
+                        except redis.ConnectionError:
+                            pass
+                    needs_resolution = True
+
                 if node_start:
                     node_delta = shift_to - node_start
                 else:
@@ -149,12 +177,18 @@ class CascadeEngine:
                 elif node_end and node_delta.total_seconds() > 0:
                     node.end_time = node_end + node_delta
 
-                node.cascade_note = f"Auto-shifted due to upstream delay. Pushed by {int(node_delta.total_seconds() / 60)} mins."
-                
+                if not needs_resolution:
+                    node.cascade_note = f"Auto-shifted due to upstream delay. Pushed by {int(node_delta.total_seconds() / 60)} mins."
+
+                # Confetti Time Focus Guard
+                gap = shift_to - max_pred_end if max_pred_end else timedelta(0)
+                if timedelta(minutes=0) < gap < timedelta(minutes=90):
+                    node.cascade_note += " [CONFETTI TIME WARNING]"
+
                 changes.append({
                     "node_id": node.id, 
                     "title": node.title, 
-                    "action": "auto-shifted", 
+                    "action": "needs-resolution" if needs_resolution else "auto-shifted", 
                     "delta_mins": node_delta.total_seconds() / 60,
                     "note": node.cascade_note
                 })

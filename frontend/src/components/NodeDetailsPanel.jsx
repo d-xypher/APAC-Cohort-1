@@ -21,7 +21,7 @@ const formatDateTime = (value) => {
 const detailRows = (node) => [
   ['Type', node.node_type || 'Unknown'],
   ['Status', node.status || 'Unknown'],
-  ['Owner', node.owner || 'Unassigned'],
+  ['Owner', node.owner_id ? `User ${node.owner_id}` : 'Unassigned'],
   ['Start', formatDateTime(node.start_time)],
   ['End', formatDateTime(node.end_time)],
   ['Priority', node.priority ? String(node.priority) : 'Not set'],

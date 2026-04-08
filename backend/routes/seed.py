@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from backend.db.database import get_db
-from backend.models.dag import DAGNode, DAGEdge, NodeType, NodeStatus
+from backend.models.dag import DAGNode, DAGEdge, NodeType, NodeStatus, User
 from backend.utils.datetime_utils import utc_now
 
 router = APIRouter(prefix="/api/seed", tags=["seed"])
@@ -14,6 +14,15 @@ def seed_demo_data(db: Session = Depends(get_db)):
     # 1. Clear existing
     db.query(DAGEdge).delete()
     db.query(DAGNode).delete()
+    
+    # Create or get Priya user
+    user = db.query(User).filter_by(username="Priya").first()
+    if not user:
+        user = User(username="Priya", email="priya@cascade.test", hashed_password="pw")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
     db.commit()
     
     today = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -24,7 +33,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         node_type=NodeType.CALENDAR_EVENT,
         start_time=today + timedelta(hours=9),
         duration_minutes=30,
-        owner="Priya"
+        owner_id=user.id
     )
     
     spec_review = DAGNode(
@@ -33,7 +42,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         start_time=today + timedelta(hours=9, minutes=30),
         duration_minutes=60,
         priority=1,
-        owner="Priya"
+        owner_id=user.id
     )
     
     design_sync = DAGNode(
@@ -41,7 +50,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         node_type=NodeType.CALENDAR_EVENT,
         start_time=today + timedelta(hours=11),
         duration_minutes=45,
-        owner="Priya"
+        owner_id=user.id
     )
     
     draft_brief = DAGNode(
@@ -50,7 +59,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         start_time=today + timedelta(hours=10, minutes=30),
         duration_minutes=30,
         priority=3,
-        owner="Priya"
+        owner_id=user.id
     )
 
     db.add_all([standup, spec_review, design_sync, draft_brief])

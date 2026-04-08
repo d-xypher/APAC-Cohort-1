@@ -3,6 +3,7 @@ import { DAGGraph } from './components/DAGGraph';
 import { AgentPanel } from './components/AgentPanel';
 import { Timeline } from './components/Timeline';
 import { NodeDetailsPanel } from './components/NodeDetailsPanel';
+import { CommandBar } from './components/CommandBar';
 import { createEventStream, dagApi } from './services/api';
 import { FaMoon, FaPlay, FaSun, FaSync, FaUndoAlt } from 'react-icons/fa';
 
@@ -346,16 +347,60 @@ function App() {
     }
   }, [fetchGraph, isUndoing, latestSnapshotId]);
 
+  const handleCommand = useCallback(async (query) => {
+    if (isSimulating || isLoadingGraph || isSeeding || nodes.length === 0) return;
+
+    setIsSimulating(true);
+    setUiError('');
+    setUiSuccess('');
+    
+    try {
+      appendAgentEvent(setAgentEvents, {
+        agent: 'Orchestrator',
+        action: 'Natural Language',
+        message: `Parsing query: "${query}"`,
+      });
+
+      // Simple mock: just trigger a cascade on the first available node
+      const targetNode = nodes[0];
+      await wait(600);
+
+      const oldTime = new Date(targetNode.start_time);
+      const newTime = new Date(Number.isNaN(oldTime.getTime()) ? Date.now() : oldTime.getTime() + 60 * 60000);
+
+      const res = await dagApi.triggerCascade({
+        trigger_node_id: targetNode.id,
+        new_start_time: newTime.toISOString(),
+        description: `NLP command: ${query}`,
+      });
+
+      const affected = Array.isArray(res?.changes)
+        ? res.changes.map((c) => c.node_id).filter((id) => typeof id === 'number')
+        : [];
+
+      setCascadingNodeIds(affected);
+      setLatestSnapshotId(res?.snapshot_id || null);
+      setSelectedNodeId(targetNode.id);
+      await fetchGraph();
+
+      setUiSuccess(`AI processed command. ${Math.max(affected.length - 1, 0)} nodes adjusted.`);
+    } catch (err) {
+      setUiError(err.message || 'Unable to process natural language command.');
+    } finally {
+      setIsSimulating(false);
+    }
+  }, [fetchGraph, isLoadingGraph, isSeeding, isSimulating, nodes]);
+
   return (
     <div className="app-container">
       <header className="header glass-panel">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <h1><span className="gradient-text-accent">🌊 CASCADE</span></h1>
-          <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>The Ripple-Effect Workflow Engine</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <h1><span className="gradient-text-accent">⚡ CASCADE</span></h1>
           <span className={`stream-pill ${isStreamConnected ? 'connected' : 'disconnected'}`}>
-            {isStreamConnected ? 'Live stream connected' : 'Live stream reconnecting'}
+            {isStreamConnected ? 'Live' : 'Reconnecting'}
           </span>
         </div>
+        <CommandBar onCommand={handleCommand} />
         
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
